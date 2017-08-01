@@ -68,11 +68,11 @@ function clean_config()
 aVol=''; aSer=''; aMod=''
 while getopts ":p:s:v:c" opt; do
     case $opt in
-        p) aMod="$OPTARG"
+        p) aMod="${OPTARG}"
         ;;
-        s) aSer="$OPTARG"
+        s) aSer="${OPTARG}"
         ;;
-        v) aVol="$OPTARG"
+        v) aVol="${OPTARG}"
         ;;
         c) clean_config
         ;;
@@ -188,7 +188,7 @@ nvramMlb="4D1EDE05-38C7-4A6A-9CC6-4BCCA8B38C14:MLB"
 # set nvram
 # ----------------------------------------------------------------------
 
-if [[ "${aVol}" == '/' || "${aVol}" == '' ]]; then
+if [ "${aVol}" == '/' ] || [ "${aVol}" == '' ]; then
     nvram ${nvramRom}=%${mgRom:0:2}%${mgRom:2:2}%${mgRom:4:2}%${mgRom:6:2}%${mgRom:8:2}%${mgRom:10:2}
     nvram ${nvramMlb}=${mgMlb}
 fi
@@ -210,7 +210,7 @@ if [ -f "${plist}" ]; then
         "${plistbuddy}" -c "Add ${nvramSer} string ${mgSer}" "${plist}" > /dev/null 2>&1
     fi
     else
-    $plistbuddy -c "Add ${nvramSer} string ${mgSer}" "${plist}" > /dev/null 2>&1
+    "${plistbuddy}" -c "Add ${nvramSer} string ${mgSer}" "${plist}" > /dev/null 2>&1
 fi
 
 # ----------------------------------------------------------------------
@@ -243,8 +243,8 @@ if [ -d "${folder}" ]; then
         done
     plist="${folder}/nvram.${mgSid}.plist"
     if [ ! -f "${plist}" ]; then
-        $plistbuddy -c "Add ${nvramRom} data ${mgRomHex}" "${plist}" > /dev/null 2>&1
-        $plistbuddy -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" > /dev/null 2>&1        
+        "${plistbuddy}" -c "Add ${nvramRom} data ${mgRomHex}" "${plist}" > /dev/null 2>&1
+        "${plistbuddy}" -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" > /dev/null 2>&1        
     fi
 fi
 
@@ -267,8 +267,8 @@ if [ -f "${plist}" ]; then
         "${plistbuddy}" -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" > /dev/null 2>&1
     fi
     else
-    $plistbuddy -c "Add ${nvramRom} data ${mgRomHex}" "${plist}" > /dev/null 2>&1
-    $plistbuddy -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" > /dev/null 2>&1
+    "${plistbuddy}" -c "Add ${nvramRom} data ${mgRomHex}" "${plist}" 
+    "${plistbuddy}" -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" 
 fi
 
 # ----------------------------------------------------------------------
