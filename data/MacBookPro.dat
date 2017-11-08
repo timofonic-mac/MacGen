@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # MacBook Pro model data
 
-if [ "$gProductName" == "MacBookPro10,1" ]; then # MacBook Pro (Retina, 15-inch, Late 2012)
+if [ "$gProductName" == "MacBookPro8,1" ]; then # MacBook Pro (13-inch, Late 2011)
+	# System serial data
+	local PPPCodes=('C02' 'C1M') # Manufactured at Quanta Computer, China
+	local YCodes=('G' 'H') # Manufactured in 2011-2012
+	local CCCCCodes=('DV13')
+	# Main logic board serial data
+	local EEEECodes=('DTML' 'DTMR' 'DTMV' 'DTMY' 'DTN2' 'DTN5')
+	local boardType=201
+
+elif [ "$gProductName" == "MacBookPro10,1" ]; then # MacBook Pro (Retina, 15-inch, Late 2012)
 	# System serial data
 	local PPPCodes=('C02') # Manufactured at Quanta Computer, China
 	local YCodes=('H' 'J' 'K') # Manufactured in 2012-2013

@@ -1,0 +1,321 @@
+#!/usr/bin/env bash
+# mg-install - Mac nvram installer
+
+# The repo folder
+gRepo=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# shellcheck source=mg-common
+source "$gRepo/mg-common"
+
+function help()
+{
+    echo
+    echo "mg-install v$gScriptVersion"
+    echo "Mac nvram installer script"
+    echo
+    echo "Usage: mg-install -p <product> -s <serial> -v <volume> -c"
+    echo
+    echo "     -p <product name>       Target Mac product name (model ID)"
+    echo "     -s <serial number>      Target Mac system serial number"
+    echo "     -v <volume disk>        Target Mac volume disk"
+    echo "     -c <clean config>       Target Mac clean config file .smbios.plist"
+    echo "     -h [-?]                 Help (this screen)"
+    echo
+    echo "If no values are specified, system values from the IORegistry will be used."
+    echo
+    exit 0
+}
+
+function esp_mount()
+{
+    targetDisk=`LC_ALL=C diskutil info "${aVol}/" | grep -i 'Part of Whole:' | awk '{print $NF}'`
+    espDisk="/dev/${targetDisk}s$(LC_ALL=C diskutil list ${targetDisk} | awk -F ':' '/EFI/ {gsub(" ", "", $1); print $1}')"
+    espMount="/Volumes/EFI"
+    if [ ! -d "${espMount}" ]; then mkdir -p "${espMount}"; fi
+    if [[ ! $(df | grep $espDisk) ]]; then
+        case $(fstyp $espDisk) in
+            hfs)   mount -t hfs "${espDisk}" "${espMount}"
+            ;;
+            msdos) mount -t msdos "${espDisk}" "${espMount}"
+            ;;
+        esac
+        sleep 0.5
+    fi
+}
+
+function esp_umount()
+{
+    targetDisk=`LC_ALL=C diskutil info "${aVol}/" | grep -i 'Part of Whole:' | awk '{print $NF}'`
+    espDisk="/dev/${targetDisk}s$(LC_ALL=C diskutil list ${targetDisk} | awk -F ':' '/EFI/ {gsub(" ", "", $1); print $1}')"
+    espMount="/Volumes/EFI"
+    if [[ $(df | grep $espDisk) ]]; then
+        umount -f "${espDisk}"
+        sleep 0.5
+    fi
+    if [[ $(df | grep $espDisk) ]]; then
+        if [ -d "${espMount}" ]; then rm -rf "${espMount}"; fi
+    fi
+}
+
+function clean_config()
+{
+    plist="${aVol}/.smbios.plist"
+    if [ -f "${plist}" ]; then
+        rm -rf "${plist}" > /dev/null 2>&1
+    fi
+}
+
+aVol=''; aSer=''; aMod=''
+while getopts ":p:s:v:c" opt; do
+    case $opt in
+        p) aMod="${OPTARG}"
+        ;;
+        s) aSer="${OPTARG}"
+        ;;
+        v) aVol="${OPTARG}"
+        ;;
+        c) clean_config
+        ;;
+        h) help
+        ;;
+        \?) help
+        ;;
+    esac
+done
+
+plistbuddy="${aVol}/usr/libexec/PlistBuddy"
+
+# ----------------------------------------------------------------------
+# set smbios variables
+# ----------------------------------------------------------------------
+
+smbiosPlist="${aVol}/.smbios.plist"
+
+if [ -f "${smbiosPlist}" ]; then
+
+    # model
+    mgMod=$("${plistbuddy}" -c "Print :model" "${smbiosPlist}")
+
+    # board-id
+    mgBid=$("${plistbuddy}" -c "Print :board-id" "${smbiosPlist}")
+
+    # serial-number
+    mgSer=$("${plistbuddy}" -c "Print :serial-number" "${smbiosPlist}")
+
+    # hardware-id
+    mgHid=$("${plistbuddy}" -c "Print :hardware-uuid" "${smbiosPlist}")
+
+    # system-id
+    mgSid=$("${plistbuddy}" -c "Print :system-id" "${smbiosPlist}")
+
+    # rom [rt-variable]
+    mgRom=$("${plistbuddy}" -c "Print :rom" "${smbiosPlist}")
+
+    # mlb [rt-variable]
+    mgMlb=$("${plistbuddy}" -c "Print :mlb" "${smbiosPlist}")
+
+    else
+
+    # model
+    if [ ${#aMod} -eq 0 ]; then
+        mgMod=$(ioreg -p IOACPIPlane -n acpi | awk -F\" '/"model"/{print $4}');
+        else
+        mgMod="${aMod}";
+    fi
+
+    # board-id
+    mgBid=$(ioreg -l -p IOACPIPlane | awk -F\" '/"board-id"/{print $4}')
+
+    # serial-number
+    if [ ${#aSer} -ne 12 ]; then
+        mgSer=$(./mg-serial ${mgMod} | grep ${mgMod} | awk -F: '/:/{gsub(/ /, "", $2); print $2}')
+        if [ ${#mgSer} -eq 0 ]; then
+            print_error "Invalid model identifier!"
+            exit 1
+            else
+            mgSer=$(printf ${mgSer} | sed -E "s/"$'\E'"\[([0-9]{1,3}((;[0-9]{1,3})*)?)?[m|K]//g")
+        fi
+        else
+        mgSer="${aSer}"
+    fi
+
+    # hardware-id
+    mgHid=$(ioreg -l -p IOACPIPlane | awk -F\" '/"IOPlatformUUID"/{print $4}')
+
+    # system-id
+    mgSid=$(ioreg -l -p IODeviceTree | awk -F\" '/"system-id"/{print $4}' | xxd -p)
+    mgSid=$(echo ${mgSid:0:8}-${mgSid:8:4}-${mgSid:12:4}-${mgSid:16:4}-${mgSid:20:12} | tr '/a-z/' '/A-Z/')
+
+    # rom [rt-variable]
+    mgRom=${mgSid:24:12}
+
+    # mlb [rt-variable]
+    mgMlb=$(./mg-mlb-serial ${mgMod} ${mgSer} | grep ${mgMod} | awk -F: '/:/{gsub(/ /, "", $2); print $2}')
+    mgMlb=$(printf ${mgMlb} | sed -E "s/"$'\E'"\[([0-9]{1,3}((;[0-9]{1,3})*)?)?[m|K]//g")
+
+    # save .smbios.plist
+    "${plistbuddy}" -c "Add :model string ${mgMod}" \
+        -c "Add :board-id string ${mgBid}" \
+        -c "Add :serial-number string ${mgSer}" \
+        -c "Add :hardware-uuid string ${mgHid}" \
+        -c "Add :system-id string ${mgSid}" \
+        -c "Add :rom string ${mgRom}" \
+        -c "Add :mlb string ${mgMlb}" "${smbiosPlist}" > /dev/null 2>&1
+    
+fi
+
+########################################################################
+# output
+########################################################################
+
+echo ""
+echo "           Model : ${mgMod}"
+echo "        Board-ID : ${mgBid}"
+echo "   Serial Number : ${mgSer}"
+echo "   Hardware UUID : ${mgHid}"
+echo ""
+echo "       System ID : ${mgSid}"
+echo "             ROM : ${mgRom}"
+echo "             MLB : ${mgMlb}"
+echo ""
+
+# ----------------------------------------------------------------------
+
+nvramRom="4D1EDE05-38C7-4A6A-9CC6-4BCCA8B38C14:ROM"
+nvramMlb="4D1EDE05-38C7-4A6A-9CC6-4BCCA8B38C14:MLB"
+
+# ----------------------------------------------------------------------
+# set nvram
+# ----------------------------------------------------------------------
+
+if [ "${aVol}" == '/' ] || [ "${aVol}" == '' ]; then
+    nvram ${nvramRom}=%${mgRom:0:2}%${mgRom:2:2}%${mgRom:4:2}%${mgRom:6:2}%${mgRom:8:2}%${mgRom:10:2}
+    nvram ${nvramMlb}=${mgMlb}
+fi
+
+# ----------------------------------------------------------------------
+
+nvramSer=":SMserial"
+
+# ----------------------------------------------------------------------
+# set 'SMBIOS.plist' bootloader chameleon
+# ----------------------------------------------------------------------
+
+plist="${aVol}/Extra/SMBIOS.plist"
+if [ -f "${plist}" ]; then
+    output=`"${plistbuddy}" -c "Print ${nvramSer}" "${plist}"`
+    if [ $? -eq 0 ]; then
+        "${plistbuddy}" -c "Set ${nvramSer} ${mgSer}" "${plist}" > /dev/null 2>&1
+        else
+        "${plistbuddy}" -c "Add ${nvramSer} string ${mgSer}" "${plist}" > /dev/null 2>&1
+    fi
+    else
+    "${plistbuddy}" -c "Add ${nvramSer} string ${mgSer}" "${plist}" > /dev/null 2>&1
+fi
+
+# ----------------------------------------------------------------------
+
+nvramRom=":NVRAM:${nvramRom}"
+nvramMlb=":NVRAM:${nvramMlb}"
+mgRomHex=$(echo "0: ${mgRom}" | xxd -r)
+
+# ----------------------------------------------------------------------
+# set 'nvram.<system-id>.plist' bootloader chameleon [filenvram 1.1.3]
+# ----------------------------------------------------------------------
+
+folder="${aVol}/Extra"
+if [ -d "${folder}" ]; then
+    find "${folder}" \( -name 'nvram.*.plist' \) -type f -maxdepth 1 | \
+        grep -v "._" | \
+        while read plist; do
+        output=`"${plistbuddy}" -c "Print ${nvramRom}" "${plist}"`
+        if [ $? -eq 0 ]; then
+            "${plistbuddy}" -c "Set ${nvramRom} ${mgRomHex}" "${plist}" > /dev/null 2>&1
+            else
+            "${plistbuddy}" -c "Add ${nvramRom} data ${mgRomHex}" "${plist}" > /dev/null 2>&1
+        fi
+        output=`"${plistbuddy}" -c "Print ${nvramMlb}" "${plist}"`
+        if [ $? -eq 0 ]; then
+            "${plistbuddy}" -c "Set ${nvramMlb} ${mgMlb}" "${plist}" > /dev/null 2>&1  
+            else
+            "${plistbuddy}" -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" > /dev/null 2>&1
+        fi
+        done
+    plist="${folder}/nvram.${mgSid}.plist"
+    if [ ! -f "${plist}" ]; then
+        "${plistbuddy}" -c "Add ${nvramRom} data ${mgRomHex}" "${plist}" > /dev/null 2>&1
+        "${plistbuddy}" -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" > /dev/null 2>&1        
+    fi
+fi
+
+# ----------------------------------------------------------------------
+# set '.nvram.plist' bootloader chameleon [filenvram 1.1.5]
+# ----------------------------------------------------------------------
+
+plist="${aVol}/.nvram.plist"
+if [ -f "${plist}" ]; then
+    output=`"${plistbuddy}" -c "Print ${nvramRom}" "${plist}"`
+    if [ $? -eq 0 ]; then
+        "${plistbuddy}" -c "Set ${nvramRom} ${mgRomHex}" "${plist}" > /dev/null 2>&1
+        else
+        "${plistbuddy}" -c "Add ${nvramRom} data ${mgRomHex}" "${plist}" > /dev/null 2>&1
+    fi
+    output=`"${plistbuddy}" -c "Print ${nvramMlb}" "${plist}"`
+    if [ $? -eq 0 ]; then
+        "${plistbuddy}" -c "Set ${nvramMlb} ${mgMlb}" "${plist}" > /dev/null 2>&1  
+        else
+        "${plistbuddy}" -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" > /dev/null 2>&1
+    fi
+    else
+    "${plistbuddy}" -c "Add ${nvramRom} data ${mgRomHex}" "${plist}" 
+    "${plistbuddy}" -c "Add ${nvramMlb} data ${mgMlb}" "${plist}" 
+fi
+
+# ----------------------------------------------------------------------
+
+nvramRom=":RtVariables:ROM"
+nvramMlb=":RtVariables:MLB"
+nvramSer=":SMBIOS:SerialNumber"
+
+# ----------------------------------------------------------------------
+# mount EFI system partition (ESP)
+# ----------------------------------------------------------------------
+
+esp_mount
+
+# ----------------------------------------------------------------------
+# set '<config>.plist' bootloader clover
+# ----------------------------------------------------------------------
+
+folder="${aVol}/Volumes/EFI/EFI/CLOVER"
+if [ -d "${folder}" ]; then
+    find "${folder}" \( -name '*.plist' \) -type f -maxdepth 1 | \
+        grep -v "._" | \
+        while read plist; do
+        output=`"${plistbuddy}" -c "Print ${nvramRom}" "${plist}" > /dev/null 2>&1`
+        if [ $? -eq 0 ]; then
+            "${plistbuddy}" -c "Set ${nvramRom} ${mgRom}" "${plist}" > /dev/null 2>&1
+            else
+            "${plistbuddy}" -c "Add ${nvramRom} string ${mgRom}" "${plist}" > /dev/null 2>&1
+        fi
+        output=`"${plistbuddy}" -c "Print ${nvramMlb}" "${plist}" > /dev/null 2>&1`
+        if [ $? -eq 0 ]; then
+            "${plistbuddy}" -c "Set ${nvramMlb} ${mgMlb}" "${plist}" > /dev/null 2>&1
+            else
+            "${plistbuddy}" -c "Add ${nvramMlb} string ${mgMlb}" "${plist}" > /dev/null 2>&1
+        fi
+        output=`"${plistbuddy}" -c "Print ${nvramSer}" "${plist}" > /dev/null 2>&1`
+        if [ $? -eq 0 ]; then
+            "${plistbuddy}" -c "Set ${nvramSer} ${mgSer}" "${plist}" > /dev/null 2>&1
+            else
+            "${plistbuddy}" -c "Add ${nvramSer} string ${mgSer}" "${plist}" > /dev/null 2>&1
+        fi
+        done
+fi
+
+# ----------------------------------------------------------------------
+# umount EFI system partition (ESP)
+# ----------------------------------------------------------------------
+
+esp_umount
+
